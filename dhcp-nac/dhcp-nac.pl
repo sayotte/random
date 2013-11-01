@@ -3,14 +3,17 @@
 use warnings;
 use strict;
 
-my ($timestamp, $hostname, $facility, $logcontent, $requested_ip, $requesting_mac, $via, $network, $reason);
+my ($timestamp, $hostname, $app, $msg_id, $facility, $level, $logcontent, $requested_ip, $requesting_mac, $via, $network, $reason);
 
 # Timestamp
 my $ts_re = '\w{3}+\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}';
 # Hostname
-my $hn_re = '\w+';
-# Facility
-my $fc_re = '[^:]+';
+my $hn_re = '[\w\.\-]+';
+# Application
+my $app_re = '[^:]+';
+# Solaris Msg ID and facility.level
+my $msg_re = '\[ID \d+ \w+\.\w+\]';
+my $msg_re_cap = '\[ID (\d+) (\w+)\.(\w+)\]';
 # IP Address
 my $ip_re = '\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}';
 # Network w/ CIDR mask
@@ -22,9 +25,12 @@ while(<STDIN>)
 {
     if(! m/dhcpd:/){ next; }
 
-    if(! m/($ts_re)\s($hn_re)\s($fc_re+):\s(.+)/)
+    if(! m/($ts_re)\s($hn_re)\s($app_re):\s($msg_re\s)?(.+)/)
     {
         print "Malformed: $_";
+        if(! m/($ts_re)\s.+/){ print "Failed ts_re\n"; }
+        elsif(! m/($ts_re)\s($hn_re)\s.+/){ print "Failed hn_re\n"; }
+        elsif(! m/($ts_re)\s($hn_re)\s($app_re):\s.+/){ print "Failed app_re\n"; }
         next;
     }
 
@@ -36,9 +42,22 @@ while(<STDIN>)
     chomp($hostname);
     s/$hostname\s(.+)/$1/;
 
-    ($facility = $_) =~ s/($fc_re):\s.+/$1/;
-    chomp($facility);
-    s/$facility:\s(.+)/$1/;
+    ($app = $_) =~ s/($app_re):\s.+/$1/;
+    chomp($app);
+    s/$app:\s(.+)/$1/;
+
+    $msg_id = $facility = $level = undef;
+    if(m/$msg_re_cap/)
+    {
+        $msg_id = $1;
+        $facility = $2;
+        $level = $3;
+        chomp($msg_id);
+        chomp($facility);
+        chomp($level);
+
+        s/$msg_re\s(.+)/$1/;
+    }
 
     $logcontent = $_;
 
@@ -49,7 +68,10 @@ while(<STDIN>)
     print "-------------------------------------------------------------------------------\n";
     print "Timestamp: $timestamp\n";
     print "Hostname: $hostname\n";
-    print "Facility: $facility\n";
+    print "Application: $app\n";
+    print "Message ID: $msg_id\n" if $msg_id;
+    print "Facility: $facility\n" if $facility;
+    print "Level: $level\n" if $level;
 #    print "Log content: $logcontent";
 
     if(m/DHCPNAK/)
@@ -66,6 +88,7 @@ while(<STDIN>)
         ($via = $_) =~ s/via (\w+)/$1/;
         chomp($via);
     
+        print "Error: DHCPNAK\n";
         print "Requested IP: $requested_ip\n";
         print "Requesting MAC: $requesting_mac\n";
         print "Via: $via\n";
@@ -85,7 +108,9 @@ while(<STDIN>)
         s/network $network:\s+(.+)/$1/;
 
         $reason = $_;
+        chomp($reason);
 
+        print "Error: LEASE DENIED\n";
         print "Requesting MAC: $requesting_mac\n";
         print "Via: $via\n";
         print "On network: $network\n";
