@@ -71,7 +71,7 @@ function sh_timeout()
     done
 
     if [ $childliving == true ]; then
-        printf 'Timeout executing command, terminating: %s\n' "$@"
+        printf 'Timeout executing command, terminating: %s\n' "$*"
         # Be nice, post SIGTERM first.
         kill -s SIGTERM "$childpid"
         sleep 1
@@ -100,6 +100,47 @@ function attempt()
         printf 'Error executing: "%s"\n' "$*"
         printf 'Exit status was: %d\n' "$status"
         exit $status
+    fi
+}
+
+### Log-tail + grep helper
+### Used when you want to tail a log file, waiting for a particular pattern to
+###   appear, in a non-interactive shell.
+### Can be combined with "sh_timeout" from above.
+function wait_for_pattern_in_file()
+{
+    local pattern="$1"
+    local file="$2"
+    local success=false
+
+    # Launch 'tail -f' in a coprocess so we can kill it later
+    coproc tail -f "$file" 2>/dev/null
+    
+    # Read from coprocess; if we hit EOF (tail was killed), 'success' will
+    #   still be 'false', so we'll return failure
+    while read -ru ${COPROC[0]} line; do
+        printf '%s' "$line" | grep "$pattern" >/dev/null
+        if [ $? -eq 0 ]; then
+            success=true
+            break
+        fi
+    done
+
+    if [ "$success" == true ]; then
+        # Suppress "Terminated" messages for child processes
+        # We didn't do this above because at the time the death of the coproc
+        #   would have been unexpected.
+        # Also, note that after calling 'disown', the 'wait' command will 
+        #   always return 0, regardless of the exit status of the process.
+        disown 
+        # Kill the coprocess
+        kill "$COPROC_PID"
+        wait "$COPROC_PID"
+        return 0
+    else
+        # We only end up here if the coproc was killed, so there's no need for
+        #   for us to kill it again.
+        return 1
     fi
 }
 
